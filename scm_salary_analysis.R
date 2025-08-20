@@ -13,6 +13,11 @@ source("config.R")
 # Load additional required library for JSON parsing
 library(rjson)
 
+# Check if toJSON is available, if not load it
+if(!exists("toJSON")) {
+  library(jsonlite)
+}
+
 # Verify API key is loaded
 if(Sys.getenv("BLS_KEY") == "") {
   stop("BLS API key not found. Please check your config.R file.")
@@ -54,17 +59,23 @@ cat("✓ Setup complete. Analyzing", length(scm_occupations), "occupations from"
 
 # Function to construct BLS OEWS series IDs
 construct_oews_series <- function(occupation_code) {
-  # Remove hyphen from occupation code
+  # Remove hyphen from occupation code and ensure it's 6 digits
   clean_code <- gsub("-", "", occupation_code)
+  # Pad with zeros if needed to make 6 digits
+  clean_code <- sprintf("%06s", clean_code)
   
   # OEWS series ID format: OEUN[area][industry][occupation][data_type]
   # area: 0000000 = National
-  # industry: 000000 = All industries
-  # data_types: 01=employment, 04=mean_wage, 10=median_wage, 11=25th_pct, 12=75th_pct, 13=90th_pct
-  data_types <- c("01", "04", "10", "11", "12", "13")
+  # industry: 000000 = All industries  
+  # occupation: 6-digit SOC code
+  # Based on the hashrocket example, format appears to be: OEUN000000000000[6-digit-code][2-digit-data-type]
   
-  series_ids <- paste0("OEUN0000000000", clean_code, data_types)
-  names(series_ids) <- c("employment", "mean_wage", "median_wage", "pct25_wage", "pct75_wage", "pct90_wage")
+  # Try the data types that are most commonly available
+  # 01 = employment, 04 = mean wage, 10 = median wage
+  data_types <- c("01", "04", "10")
+  
+  series_ids <- paste0("OEUN000000000000", clean_code, data_types)
+  names(series_ids) <- c("employment", "mean_wage", "median_wage")
   
   return(series_ids)
 }
@@ -74,16 +85,19 @@ get_oews_data <- function(occupation_code, occupation_name, years) {
   cat("Fetching data for:", occupation_name, "\n")
   
   series_ids <- construct_oews_series(occupation_code)
+  cat("  Series IDs:", paste(series_ids, collapse = ", "), "\n")
   
   # Make API call using payload format
   tryCatch({
     # Create payload for API v2 (requires registration key)
     payload <- list(
-      'seriesid' = series_ids,
-      'startyear' = min(years),
-      'endyear' = max(years),
+      'seriesid' = as.vector(series_ids),  # Ensure it's a vector, not named vector
+      'startyear' = as.character(min(years)),  # Convert to string
+      'endyear' = as.character(max(years)),    # Convert to string
       'registrationKey' = Sys.getenv("BLS_KEY")
     )
+    
+    cat("  Payload:", toJSON(payload), "\n")
     
     api_response <- blsAPI(payload, api_version = 2)
     
@@ -94,6 +108,7 @@ get_oews_data <- function(occupation_code, occupation_name, years) {
     if(is.null(json_response) || json_response$status != "REQUEST_SUCCEEDED") {
       warning("API request failed for ", occupation_name, ": ", 
               ifelse(is.null(json_response$message), "Unknown error", json_response$message))
+      cat("  Full response:", api_response, "\n")
       return(NULL)
     }
     
@@ -115,8 +130,8 @@ get_cpi_data <- function(years) {
     # Create payload for API v2
     payload <- list(
       'seriesid' = c(cpi_series),
-      'startyear' = min(years),
-      'endyear' = max(years),
+      'startyear' = as.character(min(years)),  # Convert to string
+      'endyear' = as.character(max(years)),    # Convert to string
       'registrationKey' = Sys.getenv("BLS_KEY")
     )
     
@@ -145,19 +160,48 @@ get_cpi_data <- function(years) {
 
 cat("\n=== STARTING DATA COLLECTION ===\n")
 
-# Collect data for all SCM occupations
-scm_data_raw <- list()
-for(i in seq_along(scm_occupations)) {
-  occupation_code <- names(scm_occupations)[i]
-  occupation_name <- scm_occupations[i]
+# For initial testing, let's start with just one occupation to debug
+test_occupation_code <- "13-1081"  # Logisticians
+test_occupation_name <- "Logisticians"
+
+cat("Testing with single occupation first:", test_occupation_name, "\n")
+
+# Test the series ID construction
+test_series <- construct_oews_series(test_occupation_code)
+cat("Generated series IDs:", paste(test_series, collapse = ", "), "\n")
+
+# Test single occupation first
+test_data <- get_oews_data(test_occupation_code, test_occupation_name, years)
+
+if(!is.null(test_data)) {
+  cat("✓ Test successful! Proceeding with all occupations...\n")
   
-  data <- get_oews_data(occupation_code, occupation_name, years)
-  if(!is.null(data)) {
-    scm_data_raw[[occupation_code]] <- data
+  # Collect data for all SCM occupations
+  scm_data_raw <- list()
+  
+  # Add the successful test data
+  scm_data_raw[[test_occupation_code]] <- test_data
+  
+  # Continue with remaining occupations
+  for(i in seq_along(scm_occupations)) {
+    occupation_code <- names(scm_occupations)[i]
+    occupation_name <- scm_occupations[i]
+    
+    # Skip the test occupation since we already have it
+    if(occupation_code == test_occupation_code) next
+    
+    data <- get_oews_data(occupation_code, occupation_name, years)
+    if(!is.null(data)) {
+      scm_data_raw[[occupation_code]] <- data
+    }
+    
+    # Be nice to the API - small delay between requests
+    Sys.sleep(0.5)
   }
-  
-  # Be nice to the API - small delay between requests
-  Sys.sleep(0.5)
+} else {
+  cat("✗ Test failed. Please check the series ID format and API key.\n")
+  cat("Debug: Manually check if series ID", test_series[1], "exists in BLS database\n")
+  stop("Cannot proceed without successful API connection")
 }
 
 # Get CPI data
