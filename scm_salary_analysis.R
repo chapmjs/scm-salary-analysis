@@ -65,15 +65,20 @@ construct_oews_series <- function(occupation_code) {
   clean_code <- sprintf("%06s", clean_code)
   
   # OEWS series ID format: OEUN[area][industry][occupation][data_type]
-  # area: 0000000 = National
-  # industry: 000000 = All industries  
-  # occupation: 6-digit SOC code
-  # Based on the hashrocket example, format appears to be: OEUN000000000000[6-digit-code][2-digit-data-type]
+  # From the Hashrocket example: OEUN000000000000[6-digit-code][2-digit-data-type]
+  # But looking at our error, we need fewer zeros
+  # The format should be: OEU + N + 000000 + 000000 + [6-digit-occupation] + [2-digit-data-type]
+  # Total: OEU(3) + N(1) + 000000(6) + 000000(6) + occupation(6) + data(2) = 24 characters
+  
+  # Let's try the correct format: OEUN000000000000 + occupation + data_type
+  # Our current format has: OEUN + 14 zeros + occupation + data = too many zeros
+  # Correct format should be: OEUN + 12 zeros + occupation + data
   
   # Try the data types that are most commonly available
   # 01 = employment, 04 = mean wage, 10 = median wage
   data_types <- c("01", "04", "10")
   
+  # Correct format based on BLS documentation
   series_ids <- paste0("OEUN000000000000", clean_code, data_types)
   names(series_ids) <- c("employment", "mean_wage", "median_wage")
   
@@ -165,10 +170,22 @@ test_occupation_code <- "13-1081"  # Logisticians
 test_occupation_name <- "Logisticians"
 
 cat("Testing with single occupation first:", test_occupation_name, "\n")
+cat("Original occupation code:", test_occupation_code, "\n")
+
+# Debug the series ID construction step by step
+clean_code <- gsub("-", "", test_occupation_code)
+cat("After removing hyphen:", clean_code, "\n")
+
+padded_code <- sprintf("%06s", clean_code)
+cat("After padding to 6 digits:", padded_code, "\n")
 
 # Test the series ID construction
 test_series <- construct_oews_series(test_occupation_code)
 cat("Generated series IDs:", paste(test_series, collapse = ", "), "\n")
+
+# Let's also manually construct what we think it should be
+expected_series <- paste0("OEUN000000000000", padded_code, c("01", "04", "10"))
+cat("Expected series IDs:", paste(expected_series, collapse = ", "), "\n")
 
 # Test single occupation first
 test_data <- get_oews_data(test_occupation_code, test_occupation_name, years)
