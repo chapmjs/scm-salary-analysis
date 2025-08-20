@@ -82,84 +82,73 @@ raw_data <- get_salary_data(occupation_code, analysis_year)
 
 # Process API response into clean format
 process_data <- function(api_response) {
-  # Debug: Check the structure first
   cat("Debugging API response structure...\n")
   cat("Response status:", api_response$status, "\n")
-  cat("Series type:", class(api_response$Results$series), "\n")
-  cat("Series length:", length(api_response$Results$series), "\n")
   
-  # Print first few elements to understand structure
-  cat("First series element structure:\n")
-  print(str(api_response$Results$series[[1]]))
+  # The series data comes as a data.frame, not a list
+  series_df <- api_response$Results$series
+  cat("Series structure:\n")
+  print(str(series_df))
   
-  # Extract all series from response
-  all_series <- api_response$Results$series
   results <- list()
   
-  # Handle the series structure more carefully
-  for(i in 1:length(all_series)) {
-    cat("\n--- Processing series", i, "---\n")
+  # Handle the data.frame structure
+  if(is.data.frame(series_df)) {
+    cat("Processing data.frame with", nrow(series_df), "rows\n")
     
-    series <- all_series[[i]]
-    cat("Series class:", class(series), "\n")
-    cat("Series names:", names(series), "\n")
-    
-    # Try to extract series ID more carefully
-    if("seriesID" %in% names(series)) {
-      series_id <- series$seriesID
-    } else if(is.character(series) && length(series) > 0) {
-      # If series is just a character vector, skip
-      cat("Skipping - series is atomic vector\n")
-      next
-    } else {
-      cat("Cannot find seriesID in this series\n")
-      next
-    }
-    
-    cat("Series ID:", series_id, "\n")
-    
-    # Determine data type from series ID ending
-    if(grepl("01$", series_id)) {
-      data_type <- "employment"
-    } else if(grepl("04$", series_id)) {
-      data_type <- "mean_wage"
-    } else if(grepl("10$", series_id)) {
-      data_type <- "median_wage"
-    } else {
-      data_type <- "unknown"
-    }
-    
-    cat("Data type:", data_type, "\n")
-    
-    # Check if series has data
-    if(!"data" %in% names(series) || is.null(series$data) || length(series$data) == 0) {
-      cat("No data found for this series\n")
-      next
-    }
-    
-    cat("Data points available:", length(series$data), "\n")
-    
-    # Find annual data (period M13 = annual average)
-    annual_value <- NULL
-    for(j in 1:length(series$data)) {
-      data_point <- series$data[[j]]
+    for(i in 1:nrow(series_df)) {
+      cat("\n--- Processing row", i, "---\n")
       
-      # Extract period and value safely
-      period <- data_point$period
-      value <- data_point$value
+      # Extract series information from the row
+      if("seriesID" %in% colnames(series_df)) {
+        series_id <- series_df$seriesID[i]
+      } else {
+        cat("No seriesID column found\n")
+        print(colnames(series_df))
+        next
+      }
       
-      cat("  Period:", period, "Value:", value, "\n")
+      cat("Series ID:", series_id, "\n")
       
-      if(period == "M13") {
-        annual_value <- as.numeric(value)
-        cat("  Found annual value:", annual_value, "\n")
-        break
+      # Determine data type from series ID ending
+      if(grepl("01$", series_id)) {
+        data_type <- "employment"
+      } else if(grepl("04$", series_id)) {
+        data_type <- "mean_wage" 
+      } else if(grepl("10$", series_id)) {
+        data_type <- "median_wage"
+      } else {
+        data_type <- "unknown"
+      }
+      
+      cat("Data type:", data_type, "\n")
+      
+      # Check if there's a data column with the actual time series
+      if("data" %in% colnames(series_df)) {
+        series_data <- series_df$data[[i]]  # data is likely a list column
+        
+        if(is.list(series_data) && length(series_data) > 0) {
+          cat("Found", length(series_data), "data points\n")
+          
+          # Look for annual data (M13 period)
+          for(point in series_data) {
+            if(point$period == "M13") {
+              annual_value <- as.numeric(point$value)
+              cat("Found annual value:", annual_value, "\n")
+              results[[data_type]] <- annual_value
+              break
+            }
+          }
+        } else {
+          cat("No valid data found in data column\n")
+        }
+      } else {
+        cat("No data column found. Available columns:", paste(colnames(series_df), collapse=", "), "\n")
       }
     }
-    
-    if(!is.null(annual_value) && !is.na(annual_value)) {
-      results[[data_type]] <- annual_value
-    }
+  } else {
+    cat("Unexpected series structure - not a data.frame\n")
+    print(class(series_df))
   }
   
   cat("\nFinal results:\n")
