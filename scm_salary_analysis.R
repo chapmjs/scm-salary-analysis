@@ -10,6 +10,9 @@
 # Source configuration file (contains API key and package setup)
 source("config.R")
 
+# Load additional required library for JSON parsing
+library(rjson)
+
 # Verify API key is loaded
 if(Sys.getenv("BLS_KEY") == "") {
   stop("BLS API key not found. Please check your config.R file.")
@@ -72,20 +75,29 @@ get_oews_data <- function(occupation_code, occupation_name, years) {
   
   series_ids <- construct_oews_series(occupation_code)
   
-  # Make API call
+  # Make API call using payload format
   tryCatch({
-    api_response <- blsAPI(series_ids, 
-                           startyear = min(years), 
-                           endyear = max(years),
-                           registrationKey = Sys.getenv("BLS_KEY"))
+    # Create payload for API v2 (requires registration key)
+    payload <- list(
+      'seriesid' = series_ids,
+      'startyear' = min(years),
+      'endyear' = max(years),
+      'registrationKey' = Sys.getenv("BLS_KEY")
+    )
+    
+    api_response <- blsAPI(payload, api_version = 2)
+    
+    # Parse JSON response
+    json_response <- fromJSON(api_response)
     
     # Check if API call was successful
-    if(is.null(api_response) || api_response$status != "REQUEST_SUCCEEDED") {
-      warning("API request failed for ", occupation_name)
+    if(is.null(json_response) || json_response$status != "REQUEST_SUCCEEDED") {
+      warning("API request failed for ", occupation_name, ": ", 
+              ifelse(is.null(json_response$message), "Unknown error", json_response$message))
       return(NULL)
     }
     
-    return(list(data = api_response, occupation = occupation_name, code = occupation_code))
+    return(list(data = json_response, occupation = occupation_name, code = occupation_code))
     
   }, error = function(e) {
     warning("Error fetching data for ", occupation_name, ": ", e$message)
@@ -100,17 +112,26 @@ get_cpi_data <- function(years) {
   cpi_series <- "CUUR0000SA0"  # CPI-U All items, seasonally adjusted
   
   tryCatch({
-    api_response <- blsAPI(cpi_series, 
-                           startyear = min(years), 
-                           endyear = max(years),
-                           registrationKey = Sys.getenv("BLS_KEY"))
+    # Create payload for API v2
+    payload <- list(
+      'seriesid' = c(cpi_series),
+      'startyear' = min(years),
+      'endyear' = max(years),
+      'registrationKey' = Sys.getenv("BLS_KEY")
+    )
     
-    if(is.null(api_response) || api_response$status != "REQUEST_SUCCEEDED") {
-      warning("CPI API request failed")
+    api_response <- blsAPI(payload, api_version = 2)
+    
+    # Parse JSON response
+    json_response <- fromJSON(api_response)
+    
+    if(is.null(json_response) || json_response$status != "REQUEST_SUCCEEDED") {
+      warning("CPI API request failed: ", 
+              ifelse(is.null(json_response$message), "Unknown error", json_response$message))
       return(NULL)
     }
     
-    return(api_response)
+    return(json_response)
     
   }, error = function(e) {
     warning("Error fetching CPI data: ", e$message)
@@ -156,7 +177,7 @@ cat("✓ Data collection complete\n")
 process_oews_series <- function(api_data) {
   occupation_name <- api_data$occupation
   
-  # Extract all series data
+  # Extract all series data from the JSON response
   all_series <- api_data$data$Results$series
   
   # Process each series
@@ -181,11 +202,11 @@ process_oews_series <- function(api_data) {
       year = as.numeric(map_chr(series$data, "year")),
       period = map_chr(series$data, "period"),
       value = as.numeric(map_chr(series$data, "value")),
-      footnotes = map_chr(series$data, "footnotes")
+      footnotes = map_chr(series$data, function(x) ifelse(is.null(x$footnotes), "", x$footnotes))
     )
   }) %>%
     filter(period == "M13") %>%  # Annual average (M13)
-    select(-series_id, -period) %>%
+    select(-series_id, -period, -footnotes) %>%
     pivot_wider(names_from = data_type, values_from = value) %>%
     mutate(occupation = occupation_name) %>%
     select(occupation, year, everything())
