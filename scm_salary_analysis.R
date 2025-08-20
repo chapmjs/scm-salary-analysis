@@ -148,15 +148,15 @@ salary_data <- process_data(raw_data)
 
 # Create summary
 create_summary <- function(data, occupation, year) {
-  cat("\n", "="*50, "\n")
+  cat("\n", paste(rep("=", 50), collapse=""), "\n")
   cat("SALARY ANALYSIS SUMMARY\n")
-  cat("="*50, "\n")
+  cat(paste(rep("=", 50), collapse=""), "\n")
   cat("Occupation:", occupation, "\n")
   cat("Year:", year, "\n")
   cat("Source: Bureau of Labor Statistics (OEWS)\n\n")
   
   cat("EMPLOYMENT & WAGES:\n")
-  cat("-"*30, "\n")
+  cat(paste(rep("-", 30), collapse=""), "\n")
   
   if(!is.null(data$employment)) {
     cat("Total Employment:", scales::comma(data$employment), "workers\n")
@@ -176,7 +176,7 @@ create_summary <- function(data, occupation, year) {
   if(!is.null(data$median_wage) && !is.null(data$mean_wage)) {
     wage_ratio <- data$mean_wage / data$median_wage
     cat("\nWage Distribution:\n")
-    cat("-"*20, "\n")
+    cat(paste(rep("-", 20), collapse=""), "\n")
     cat("Mean/Median Ratio:", sprintf("%.2f", wage_ratio), "\n")
     if(wage_ratio > 1.1) {
       cat("Distribution: Right-skewed (some high earners)\n")
@@ -187,7 +187,7 @@ create_summary <- function(data, occupation, year) {
     }
   }
   
-  cat("\n", "="*50, "\n")
+  cat("\n", paste(rep("=", 50), collapse=""), "\n")
 }
 
 # Display results
@@ -237,7 +237,7 @@ quick_analysis <- function(occ_code, occ_name, year = 2024) {
 
 # Example: Compare with other SCM occupations
 cat("\nCOMPARISON WITH OTHER SCM OCCUPATIONS:\n")
-cat("="*45, "\n")
+cat(paste(rep("=", 45), collapse=""), "\n")
 
 # Uncomment to compare with other occupations:
 # quick_analysis("11-3071", "Transportation Managers")
