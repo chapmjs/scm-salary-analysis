@@ -82,47 +82,75 @@ raw_data <- get_salary_data(occupation_code, analysis_year)
 
 # Process API response into clean format
 process_data <- function(api_response) {
-  # Debug: Check the structure
-  cat("Checking API response structure...\n")
+  # Debug: Check the structure first
+  cat("Debugging API response structure...\n")
+  cat("Response status:", api_response$status, "\n")
+  cat("Series type:", class(api_response$Results$series), "\n")
+  cat("Series length:", length(api_response$Results$series), "\n")
+  
+  # Print first few elements to understand structure
+  cat("First series element structure:\n")
+  print(str(api_response$Results$series[[1]]))
   
   # Extract all series from response
   all_series <- api_response$Results$series
-  
-  # Process each series
   results <- list()
   
+  # Handle the series structure more carefully
   for(i in 1:length(all_series)) {
+    cat("\n--- Processing series", i, "---\n")
+    
     series <- all_series[[i]]
+    cat("Series class:", class(series), "\n")
+    cat("Series names:", names(series), "\n")
     
-    # Handle different possible structures
-    series_id <- if(is.list(series$seriesID)) series$seriesID[[1]] else series$seriesID
-    
-    cat("Processing series:", series_id, "\n")
-    
-    # Determine data type from series ID ending
-    data_type <- case_when(
-      str_ends(series_id, "01") ~ "employment",
-      str_ends(series_id, "04") ~ "mean_wage", 
-      str_ends(series_id, "10") ~ "median_wage",
-      TRUE ~ "unknown"
-    )
-    
-    cat("  Data type:", data_type, "\n")
-    
-    # Check if series has data
-    if(is.null(series$data) || length(series$data) == 0) {
-      cat("  No data found for this series\n")
+    # Try to extract series ID more carefully
+    if("seriesID" %in% names(series)) {
+      series_id <- series$seriesID
+    } else if(is.character(series) && length(series) > 0) {
+      # If series is just a character vector, skip
+      cat("Skipping - series is atomic vector\n")
+      next
+    } else {
+      cat("Cannot find seriesID in this series\n")
       next
     }
+    
+    cat("Series ID:", series_id, "\n")
+    
+    # Determine data type from series ID ending
+    if(grepl("01$", series_id)) {
+      data_type <- "employment"
+    } else if(grepl("04$", series_id)) {
+      data_type <- "mean_wage"
+    } else if(grepl("10$", series_id)) {
+      data_type <- "median_wage"
+    } else {
+      data_type <- "unknown"
+    }
+    
+    cat("Data type:", data_type, "\n")
+    
+    # Check if series has data
+    if(!"data" %in% names(series) || is.null(series$data) || length(series$data) == 0) {
+      cat("No data found for this series\n")
+      next
+    }
+    
+    cat("Data points available:", length(series$data), "\n")
     
     # Find annual data (period M13 = annual average)
     annual_value <- NULL
     for(j in 1:length(series$data)) {
       data_point <- series$data[[j]]
-      period <- if(is.list(data_point$period)) data_point$period[[1]] else data_point$period
+      
+      # Extract period and value safely
+      period <- data_point$period
+      value <- data_point$value
+      
+      cat("  Period:", period, "Value:", value, "\n")
       
       if(period == "M13") {
-        value <- if(is.list(data_point$value)) data_point$value[[1]] else data_point$value
         annual_value <- as.numeric(value)
         cat("  Found annual value:", annual_value, "\n")
         break
@@ -134,7 +162,8 @@ process_data <- function(api_response) {
     }
   }
   
-  cat("Final results:", names(results), "\n")
+  cat("\nFinal results:\n")
+  print(results)
   return(results)
 }
 
