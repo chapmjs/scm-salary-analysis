@@ -37,13 +37,16 @@ construct_series_ids <- function(occupation_code) {
   clean_code <- sprintf("%06s", gsub("-", "", occupation_code))
   
   # OEWS series format: OE + U + N + 0000000 + 000000 + occupation + datatype
-  # OE = survey, U = not seasonally adjusted, N = national
-  # 0000000 = national area (7 zeros), 000000 = all industries (6 zeros)
   base_id <- paste0("OEUN0000000000000", clean_code)
   
-  # Data types: 01=employment, 04=mean_wage, 10=median_wage
-  series_ids <- paste0(base_id, c("01", "04", "10"))
-  names(series_ids) <- c("employment", "mean_wage", "median_wage")
+  # Correct data types: 01=employment, 04=mean_wage, 13=annual_median_wage
+  series_ids <- paste0(base_id, c("01", "04", "13"))
+  names(series_ids) <- c("employment", "mean_wage", "median_wage_annual")
+  
+  cat("Constructed series IDs:\n")
+  for(i in 1:length(series_ids)) {
+    cat("  ", names(series_ids)[i], ":", series_ids[i], "\n")
+  }
   
   return(series_ids)
 }
@@ -82,77 +85,65 @@ raw_data <- get_salary_data(occupation_code, analysis_year)
 
 # Process API response into clean format
 process_data <- function(api_response) {
-  cat("Debugging API response structure...\n")
-  cat("Response status:", api_response$status, "\n")
+  cat("Processing BLS API response...\n")
   
-  # The series data comes as a data.frame, not a list
   series_df <- api_response$Results$series
-  cat("Series structure:\n")
-  print(str(series_df))
-  
   results <- list()
   
-  # Handle the data.frame structure
-  if(is.data.frame(series_df)) {
-    cat("Processing data.frame with", nrow(series_df), "rows\n")
+  # Process each series (row in the data.frame)
+  for(i in 1:nrow(series_df)) {
+    series_id <- series_df$seriesID[i]
     
-    for(i in 1:nrow(series_df)) {
-      cat("\n--- Processing row", i, "---\n")
-      
-      # Extract series information from the row
-      if("seriesID" %in% colnames(series_df)) {
-        series_id <- series_df$seriesID[i]
-      } else {
-        cat("No seriesID column found\n")
-        print(colnames(series_df))
-        next
-      }
-      
-      cat("Series ID:", series_id, "\n")
-      
-      # Determine data type from series ID ending
-      if(grepl("01$", series_id)) {
-        data_type <- "employment"
-      } else if(grepl("04$", series_id)) {
-        data_type <- "mean_wage" 
-      } else if(grepl("10$", series_id)) {
-        data_type <- "median_wage"
-      } else {
-        data_type <- "unknown"
-      }
-      
-      cat("Data type:", data_type, "\n")
-      
-      # Check if there's a data column with the actual time series
-      if("data" %in% colnames(series_df)) {
-        series_data <- series_df$data[[i]]  # data is likely a list column
-        
-        if(is.list(series_data) && length(series_data) > 0) {
-          cat("Found", length(series_data), "data points\n")
-          
-          # Look for annual data (M13 period)
-          for(point in series_data) {
-            if(point$period == "M13") {
-              annual_value <- as.numeric(point$value)
-              cat("Found annual value:", annual_value, "\n")
-              results[[data_type]] <- annual_value
-              break
-            }
-          }
-        } else {
-          cat("No valid data found in data column\n")
-        }
-      } else {
-        cat("No data column found. Available columns:", paste(colnames(series_df), collapse=", "), "\n")
-      }
+    # Let's be more careful about what each series ID represents
+    # OEWS data type codes:
+    # 01 = Total employment
+    # 04 = Mean annual wage
+    # 10 = Annual 10th percentile wage
+    # 11 = Annual 25th percentile wage
+    # 12 = Hourly median wage
+    # 13 = Annual median wage
+    # 14 = Annual 75th percentile wage
+    # 15 = Annual 90th percentile wage
+    
+    if(grepl("01$", series_id)) {
+      data_type <- "employment"
+    } else if(grepl("04$", series_id)) {
+      data_type <- "mean_wage_annual" 
+    } else if(grepl("10$", series_id)) {
+      data_type <- "median_wage_annual"  # This should be annual median
+    } else if(grepl("12$", series_id)) {
+      data_type <- "median_wage_hourly"
+    } else if(grepl("13$", series_id)) {
+      data_type <- "median_wage_annual"
+    } else {
+      cat("Unknown series type:", series_id, "\n")
+      next
     }
-  } else {
-    cat("Unexpected series structure - not a data.frame\n")
-    print(class(series_df))
+    
+    cat("Processing", data_type, "(Series:", series_id, ")...\n")
+    
+    # Extract the data for this series
+    series_data <- series_df$data[[i]]
+    
+    if(nrow(series_data) > 0) {
+      value <- as.numeric(series_data$value[1])
+      period <- series_data$period[1]
+      
+      cat("  Period:", period, "Value:", value, "\n")
+      
+      results[[data_type]] <- value
+    }
   }
   
-  cat("\nFinal results:\n")
-  print(results)
+  cat("\nAll extracted values:\n")
+  for(name in names(results)) {
+    if(grepl("employment", name)) {
+      cat(name, ":", scales::comma(results[[name]]), "workers\n")
+    } else {
+      cat(name, ": $", scales::comma(results[[name]]), "\n")
+    }
+  }
+  
   return(results)
 }
 
