@@ -179,15 +179,29 @@ cat("After removing hyphen:", clean_code, "\n")
 padded_code <- sprintf("%06s", clean_code)
 cat("After padding to 6 digits:", padded_code, "\n")
 
-# Test the series ID construction
+# Test the series ID construction with the corrected format
 test_series <- construct_oews_series(test_occupation_code)
-cat("Generated series IDs:", paste(test_series, collapse = ", "), "\n")
 
-# Let's also manually construct what we think it should be
-expected_series <- paste0("OEUN000000000000", padded_code, c("01", "04", "10"))
-cat("Expected series IDs:", paste(expected_series, collapse = ", "), "\n")
+# Expected format based on BLS documentation:
+# OE + U + N + 0000000 + 000000 + 131081 + 01 = OEUN0000000000000131081001
+expected_manual <- c(
+  "OEUN000000000000013108101",  # employment
+  "OEUN000000000000013108104",  # mean wage  
+  "OEUN000000000000013108110"   # median wage
+)
+cat("Expected series IDs (manual):", paste(expected_manual, collapse = ", "), "\n")
+
+# Test with a real series ID from the BLS documentation
+cat("\n=== TESTING WITH DOCUMENTATION EXAMPLE ===\n")
+# The documentation shows: OEUM000040000000000000001
+# This breaks down as: OE + U + M + 0000400 + 000000 + 000000 + 01
+# Let's construct a similar one for our occupation at national level
+
+doc_example_format <- "OEUN000000000000013108101"
+cat("Documentation-based format:", doc_example_format, "\n")
 
 # Test single occupation first
+cat("\n=== TESTING API CALL ===\n")
 test_data <- get_oews_data(test_occupation_code, test_occupation_name, years)
 
 if(!is.null(test_data)) {
