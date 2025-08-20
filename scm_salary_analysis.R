@@ -59,28 +59,57 @@ cat("✓ Setup complete. Analyzing", length(scm_occupations), "occupations from"
 
 # Function to construct BLS OEWS series IDs
 construct_oews_series <- function(occupation_code) {
-  # Remove hyphen from occupation code and ensure it's 6 digits
+  cat("  Constructing OEWS series IDs for:", occupation_code, "\n")
+  
+  # Remove hyphen from occupation code
   clean_code <- gsub("-", "", occupation_code)
-  # Pad with zeros if needed to make 6 digits
-  clean_code <- sprintf("%06s", clean_code)
+  cat("  After removing hyphen:", clean_code, "\n")
   
-  # OEWS series ID format: OEUN[area][industry][occupation][data_type]
-  # From the Hashrocket example: OEUN000000000000[6-digit-code][2-digit-data-type]
-  # But looking at our error, we need fewer zeros
-  # The format should be: OEU + N + 000000 + 000000 + [6-digit-occupation] + [2-digit-data-type]
-  # Total: OEU(3) + N(1) + 000000(6) + 000000(6) + occupation(6) + data(2) = 24 characters
+  # Ensure it's 6 digits - pad with leading zeros if needed
+  padded_code <- sprintf("%06s", clean_code)
+  cat("  After padding to 6 digits:", padded_code, "\n")
   
-  # Let's try the correct format: OEUN000000000000 + occupation + data_type
-  # Our current format has: OEUN + 14 zeros + occupation + data = too many zeros
-  # Correct format should be: OEUN + 12 zeros + occupation + data
+  # OEWS series ID format from official BLS documentation:
+  # OE + U + areatype + area_code + industry_code + occupation_code + datatype_code
+  # Example: OEUM000040000000000000001
+  # 
+  # For national cross-industry estimates:
+  # - OE = survey abbreviation (2 chars)
+  # - U = not seasonally adjusted (1 char)
+  # - N = National areatype (1 char) 
+  # - 0000000 = National area code (7 chars = 7 zeros)
+  # - 000000 = All industries (6 chars = 6 zeros)
+  # - occupation_code = 6-digit SOC code (6 chars)
+  # - datatype_code = 2-digit data type (2 chars)
+  # Total: 2+1+1+7+6+6+2 = 25 characters with 13 zeros total
   
-  # Try the data types that are most commonly available
-  # 01 = employment, 04 = mean wage, 10 = median wage
+  # Components for national cross-industry data
+  survey_abbr <- "OE"
+  seasonal <- "U"  # Not seasonally adjusted
+  areatype <- "N"  # National
+  area_code <- "0000000"  # National area code (7 zeros)
+  industry_code <- "000000"  # All industries (6 zeros)
+  # Total zeros = 7 + 6 = 13 zeros
+  
+  # Data types: 01=employment, 04=mean_wage, 10=median_wage
   data_types <- c("01", "04", "10")
   
-  # Correct format based on BLS documentation
-  series_ids <- paste0("OEUN0000000000000", clean_code, data_types)
+  # Construct series IDs using components (correct method with 13 zeros total)
+  base_id <- paste0(survey_abbr, seasonal, areatype, area_code, industry_code, padded_code)
+  series_ids <- paste0(base_id, data_types)
   names(series_ids) <- c("employment", "mean_wage", "median_wage")
+  
+  cat("  Base components:\n")
+  cat("    Survey:", survey_abbr, "(", nchar(survey_abbr), "chars )\n")
+  cat("    Seasonal:", seasonal, "(", nchar(seasonal), "chars )\n") 
+  cat("    Areatype:", areatype, "(", nchar(areatype), "chars )\n")
+  cat("    Area code:", area_code, "(", nchar(area_code), "chars = 7 zeros )\n")
+  cat("    Industry:", industry_code, "(", nchar(industry_code), "chars = 6 zeros )\n")
+  cat("    Occupation:", padded_code, "(", nchar(padded_code), "chars )\n")
+  cat("  Base ID:", base_id, "(length:", nchar(base_id), ")\n")
+  cat("  Final series IDs:", paste(series_ids, collapse = ", "), "\n")
+  cat("  Series ID lengths:", paste(nchar(series_ids), collapse = ", "), "\n")
+  cat("  Total zeros in each ID: 13 (7 area + 6 industry)\n")
   
   return(series_ids)
 }
@@ -182,23 +211,23 @@ cat("After padding to 6 digits:", padded_code, "\n")
 # Test the series ID construction with the corrected format
 test_series <- construct_oews_series(test_occupation_code)
 
-# Expected format based on BLS documentation:
+# Expected format based on BLS documentation with 13 zeros total:
 # OE + U + N + 0000000 + 000000 + 131081 + 01 = OEUN0000000000000131081001
 expected_manual <- c(
-  "OEUN000000000000013108101",  # employment
-  "OEUN000000000000013108104",  # mean wage  
-  "OEUN000000000000013108110"   # median wage
+  "OEUN0000000000000131081001",  # employment (13 zeros)
+  "OEUN0000000000000131081004",  # mean wage (13 zeros)
+  "OEUN0000000000000131081010"   # median wage (13 zeros)
 )
-cat("Expected series IDs (manual):", paste(expected_manual, collapse = ", "), "\n")
+cat("Expected series IDs (13 zeros):", paste(expected_manual, collapse = ", "), "\n")
 
 # Test with a real series ID from the BLS documentation
 cat("\n=== TESTING WITH DOCUMENTATION EXAMPLE ===\n")
 # The documentation shows: OEUM000040000000000000001
 # This breaks down as: OE + U + M + 0000400 + 000000 + 000000 + 01
-# Let's construct a similar one for our occupation at national level
+# For national data: OE + U + N + 0000000 + 000000 + occupation + datatype
 
-doc_example_format <- "OEUN000000000000013108101"
-cat("Documentation-based format:", doc_example_format, "\n")
+doc_example_format <- "OEUN0000000000000131081001"  # 13 zeros total
+cat("Documentation-based format (13 zeros):", doc_example_format, "\n")
 
 # Test single occupation first
 cat("\n=== TESTING API CALL ===\n")
@@ -307,15 +336,25 @@ process_oews_series <- function(api_data) {
     
     cat("      Data points:", length(series$data), "\n")
     
-    # Extract time series data
-    series_data <- tibble(
-      series_id = series_id,
-      data_type = data_type,
-      year = as.numeric(map_chr(series$data, "year")),
-      period = map_chr(series$data, "period"),
-      value = as.numeric(map_chr(series$data, "value")),
-      footnotes = map_chr(series$data, function(x) ifelse(is.null(x$footnotes), "", x$footnotes))
-    )
+    # Extract time series data - handle different possible structures
+    series_data <- map_dfr(series$data, function(data_point) {
+      # Handle both possible structures
+      year_val <- if(is.list(data_point$year)) data_point$year[[1]] else data_point$year
+      period_val <- if(is.list(data_point$period)) data_point$period[[1]] else data_point$period
+      value_val <- if(is.list(data_point$value)) data_point$value[[1]] else data_point$value
+      footnotes_val <- if(is.null(data_point$footnotes)) "" else {
+        if(is.list(data_point$footnotes)) paste(unlist(data_point$footnotes), collapse = ",") else data_point$footnotes
+      }
+      
+      tibble(
+        series_id = series_id,
+        data_type = data_type,
+        year = as.numeric(year_val),
+        period = period_val,
+        value = as.numeric(value_val),
+        footnotes = footnotes_val
+      )
+    })
     
     # Filter for annual data
     annual_data <- series_data %>% filter(period == "M13")
@@ -331,10 +370,10 @@ process_oews_series <- function(api_data) {
   
   # Pivot and clean
   final_data <- processed_data %>%
-    select(-series_id, -period, -footnotes) %>%
+    select(-series_id, -footnotes) %>%
     pivot_wider(names_from = data_type, values_from = value) %>%
     mutate(occupation = occupation_name) %>%
-    select(occupation, year, everything())
+    select(occupation, year, everything(), -period)
   
   cat("  Final data dimensions:", nrow(final_data), "x", ncol(final_data), "\n")
   cat("  Columns:", paste(colnames(final_data), collapse = ", "), "\n")
@@ -792,6 +831,10 @@ cat("✓ Analysis complete! Check output folders for results.\n")
 # FINAL STATUS SUMMARY
 # ==========================================
 
+# ==========================================
+# FINAL STATUS SUMMARY
+# ==========================================
+
 cat("\n", "="*60, "\n")
 cat("ANALYSIS COMPLETE - FILES GENERATED:\n")
 cat("="*60, "\n")
@@ -829,8 +872,8 @@ cat("="*60, "\n")
 
 # cat("\n=== DEBUG: TESTING API CONNECTION ===\n")
 # 
-# # Test single series ID manually
-# test_series_id <- "OEUN0000000000000131081101"  # Logisticians employment
+# # Test single series ID manually with correct 13-zero format
+# test_series_id <- "OEUN0000000000000131081001"  # Logisticians employment (13 zeros)
 # cat("Testing series ID:", test_series_id, "\n")
 # 
 # payload_test <- list(
