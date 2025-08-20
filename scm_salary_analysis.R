@@ -82,30 +82,59 @@ raw_data <- get_salary_data(occupation_code, analysis_year)
 
 # Process API response into clean format
 process_data <- function(api_response) {
+  # Debug: Check the structure
+  cat("Checking API response structure...\n")
+  
   # Extract all series from response
   all_series <- api_response$Results$series
   
   # Process each series
   results <- list()
   
-  for(series in all_series) {
-    series_id <- series$seriesID
+  for(i in 1:length(all_series)) {
+    series <- all_series[[i]]
+    
+    # Handle different possible structures
+    series_id <- if(is.list(series$seriesID)) series$seriesID[[1]] else series$seriesID
+    
+    cat("Processing series:", series_id, "\n")
     
     # Determine data type from series ID ending
     data_type <- case_when(
       str_ends(series_id, "01") ~ "employment",
       str_ends(series_id, "04") ~ "mean_wage", 
-      str_ends(series_id, "10") ~ "median_wage"
+      str_ends(series_id, "10") ~ "median_wage",
+      TRUE ~ "unknown"
     )
     
-    # Extract annual data (period M13 = annual average)
-    annual_data <- series$data[sapply(series$data, function(x) x$period == "M13")]
+    cat("  Data type:", data_type, "\n")
     
-    if(length(annual_data) > 0) {
-      results[[data_type]] <- as.numeric(annual_data[[1]]$value)
+    # Check if series has data
+    if(is.null(series$data) || length(series$data) == 0) {
+      cat("  No data found for this series\n")
+      next
+    }
+    
+    # Find annual data (period M13 = annual average)
+    annual_value <- NULL
+    for(j in 1:length(series$data)) {
+      data_point <- series$data[[j]]
+      period <- if(is.list(data_point$period)) data_point$period[[1]] else data_point$period
+      
+      if(period == "M13") {
+        value <- if(is.list(data_point$value)) data_point$value[[1]] else data_point$value
+        annual_value <- as.numeric(value)
+        cat("  Found annual value:", annual_value, "\n")
+        break
+      }
+    }
+    
+    if(!is.null(annual_value) && !is.na(annual_value)) {
+      results[[data_type]] <- annual_value
     }
   }
   
+  cat("Final results:", names(results), "\n")
   return(results)
 }
 
