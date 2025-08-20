@@ -207,6 +207,16 @@ if(!is.null(test_data)) {
 # Get CPI data
 cpi_data_raw <- get_cpi_data(years)
 
+# Check what we actually collected
+cat("\n=== DATA COLLECTION SUMMARY ===\n")
+cat("Occupations with data:", length(scm_data_raw), "\n")
+cat("CPI data available:", !is.null(cpi_data_raw), "\n")
+
+if(length(scm_data_raw) == 0) {
+  cat("✗ No occupation data collected. Check API key and series IDs.\n")
+  stop("Cannot proceed without occupation data")
+}
+
 # Save raw data
 save(scm_data_raw, cpi_data_raw, years, file = "data/raw/bls_raw_data.RData")
 cat("✓ Raw data saved to data/raw/bls_raw_data.RData\n")
@@ -221,12 +231,29 @@ cat("✓ Data collection complete\n")
 process_oews_series <- function(api_data) {
   occupation_name <- api_data$occupation
   
+  cat("Processing data for:", occupation_name, "\n")
+  
+  # Check if we have valid data structure
+  if(is.null(api_data$data) || is.null(api_data$data$Results) || is.null(api_data$data$Results$series)) {
+    warning("Invalid data structure for ", occupation_name)
+    return(tibble())
+  }
+  
   # Extract all series data from the JSON response
   all_series <- api_data$data$Results$series
+  
+  cat("  Found", length(all_series), "data series\n")
+  
+  if(length(all_series) == 0) {
+    warning("No data series found for ", occupation_name)
+    return(tibble())
+  }
   
   # Process each series
   processed_data <- map_dfr(all_series, function(series) {
     series_id <- series$seriesID
+    
+    cat("    Processing series:", series_id, "\n")
     
     # Extract data type from series ID
     data_type <- case_when(
@@ -239,8 +266,18 @@ process_oews_series <- function(api_data) {
       TRUE ~ "unknown"
     )
     
+    cat("      Data type:", data_type, "\n")
+    
+    # Check if series has data
+    if(is.null(series$data) || length(series$data) == 0) {
+      warning("No data points in series ", series_id)
+      return(tibble())
+    }
+    
+    cat("      Data points:", length(series$data), "\n")
+    
     # Extract time series data
-    tibble(
+    series_data <- tibble(
       series_id = series_id,
       data_type = data_type,
       year = as.numeric(map_chr(series$data, "year")),
@@ -248,14 +285,30 @@ process_oews_series <- function(api_data) {
       value = as.numeric(map_chr(series$data, "value")),
       footnotes = map_chr(series$data, function(x) ifelse(is.null(x$footnotes), "", x$footnotes))
     )
-  }) %>%
-    filter(period == "M13") %>%  # Annual average (M13)
+    
+    # Filter for annual data
+    annual_data <- series_data %>% filter(period == "M13")
+    cat("      Annual data points:", nrow(annual_data), "\n")
+    
+    return(annual_data)
+  })
+  
+  if(nrow(processed_data) == 0) {
+    warning("No processed data for ", occupation_name)
+    return(tibble())
+  }
+  
+  # Pivot and clean
+  final_data <- processed_data %>%
     select(-series_id, -period, -footnotes) %>%
     pivot_wider(names_from = data_type, values_from = value) %>%
     mutate(occupation = occupation_name) %>%
     select(occupation, year, everything())
   
-  return(processed_data)
+  cat("  Final data dimensions:", nrow(final_data), "x", ncol(final_data), "\n")
+  cat("  Columns:", paste(colnames(final_data), collapse = ", "), "\n")
+  
+  return(final_data)
 }
 
 # Function to process CPI data
@@ -279,8 +332,24 @@ process_cpi_data <- function(cpi_raw) {
 
 cat("\n=== STARTING DATA PROCESSING ===\n")
 
+# Check if we have data to process
+if(length(scm_data_raw) == 0) {
+  cat("✗ No raw data available for processing. Check data collection step.\n")
+  stop("Cannot process data - no raw data available")
+}
+
 # Process all occupation data
+cat("Processing", length(scm_data_raw), "occupations...\n")
 scm_processed <- map_dfr(scm_data_raw, process_oews_series)
+
+# Check processed data
+cat("Processed data dimensions:", nrow(scm_processed), "rows,", ncol(scm_processed), "columns\n")
+cat("Columns:", paste(colnames(scm_processed), collapse = ", "), "\n")
+
+if(nrow(scm_processed) == 0) {
+  cat("✗ No data processed successfully. Check API responses.\n")
+  stop("Cannot proceed - no processed data available")
+}
 
 # Process CPI data
 cpi_processed <- process_cpi_data(cpi_data_raw)
@@ -304,6 +373,10 @@ if(!is.null(cpi_processed)) {
     mutate(across(ends_with("_wage"), ~ .x, .names = "real_{.col}"))
 }
 
+# Check final data structure
+cat("Final data dimensions:", nrow(scm_inflation_adjusted), "rows,", ncol(scm_inflation_adjusted), "columns\n")
+cat("Final columns:", paste(colnames(scm_inflation_adjusted), collapse = ", "), "\n")
+
 # Save processed data
 write_csv(scm_inflation_adjusted, "data/processed/scm_salary_data.csv")
 save(scm_inflation_adjusted, cpi_processed, file = "data/processed/processed_data.RData")
@@ -314,9 +387,21 @@ cat("✓ Processed data saved to data/processed/\n")
 # Data quality check
 cat("\nData Quality Summary:\n")
 cat("- Occupations processed:", length(unique(scm_inflation_adjusted$occupation)), "\n")
-cat("- Years covered:", paste(range(scm_inflation_adjusted$year), collapse = "-"), "\n")
+cat("- Years covered:", paste(range(scm_inflation_adjusted$year, na.rm = TRUE), collapse = "-"), "\n")
 cat("- Total records:", nrow(scm_inflation_adjusted), "\n")
-cat("- Missing salary data:", sum(is.na(scm_inflation_adjusted$real_median_wage)), "\n")
+
+# Check for wage data availability
+if("real_median_wage" %in% colnames(scm_inflation_adjusted)) {
+  cat("- Missing median wage data:", sum(is.na(scm_inflation_adjusted$real_median_wage)), "\n")
+} else {
+  cat("- ✗ No median wage data available\n")
+}
+
+if("real_mean_wage" %in% colnames(scm_inflation_adjusted)) {
+  cat("- Missing mean wage data:", sum(is.na(scm_inflation_adjusted$real_mean_wage)), "\n")
+} else {
+  cat("- ✗ No mean wage data available\n")
+}
 
 # ==========================================
 # PHASE 4: ANALYSIS FUNCTIONS
@@ -354,6 +439,22 @@ perform_trend_regression <- function(data, wage_column) {
 
 cat("\n=== STARTING ANALYSIS ===\n")
 
+# Check if we have processed data with required columns
+if(!exists("scm_inflation_adjusted") || nrow(scm_inflation_adjusted) == 0) {
+  cat("✗ No processed data available for analysis. Check data processing step.\n")
+  stop("Cannot perform analysis - no processed data available")
+}
+
+# Check for required columns
+required_columns <- c("occupation", "year", "real_median_wage")
+missing_columns <- required_columns[!required_columns %in% colnames(scm_inflation_adjusted)]
+
+if(length(missing_columns) > 0) {
+  cat("✗ Missing required columns:", paste(missing_columns, collapse = ", "), "\n")
+  cat("Available columns:", paste(colnames(scm_inflation_adjusted), collapse = ", "), "\n")
+  stop("Cannot perform analysis - missing required data columns")
+}
+
 # 1. CAGR Analysis
 cat("Calculating Compound Annual Growth Rates...\n")
 cagr_analysis <- scm_inflation_adjusted %>%
@@ -361,17 +462,34 @@ cagr_analysis <- scm_inflation_adjusted %>%
   arrange(year) %>%
   filter(!is.na(real_median_wage)) %>%
   summarise(
-    years_span = max(year) - min(year),
+    years_span = max(year, na.rm = TRUE) - min(year, na.rm = TRUE),
     n_years = n(),
-    start_year = min(year),
-    end_year = max(year),
-    start_salary = first(real_median_wage),
-    end_salary = last(real_median_wage),
+    start_year = min(year, na.rm = TRUE),
+    end_year = max(year, na.rm = TRUE),
+    start_salary = first(real_median_wage, na_rm = TRUE),
+    end_salary = last(real_median_wage, na_rm = TRUE),
     median_cagr = calculate_cagr(start_salary, end_salary, years_span),
-    mean_cagr = calculate_cagr(first(real_mean_wage), last(real_mean_wage), years_span),
     .groups = "drop"
-  ) %>%
-  arrange(desc(median_cagr))
+  )
+
+# Add mean wage CAGR if available
+if("real_mean_wage" %in% colnames(scm_inflation_adjusted)) {
+  cagr_mean <- scm_inflation_adjusted %>%
+    group_by(occupation) %>%
+    arrange(year) %>%
+    filter(!is.na(real_mean_wage)) %>%
+    summarise(
+      mean_cagr = calculate_cagr(first(real_mean_wage, na_rm = TRUE), 
+                                 last(real_mean_wage, na_rm = TRUE), 
+                                 max(year, na.rm = TRUE) - min(year, na.rm = TRUE)),
+      .groups = "drop"
+    )
+  
+  cagr_analysis <- cagr_analysis %>%
+    left_join(cagr_mean, by = "occupation")
+}
+
+cagr_analysis <- cagr_analysis %>% arrange(desc(median_cagr))
 
 # 2. Regression Analysis
 cat("Performing trend regression analysis...\n")
@@ -379,11 +497,27 @@ regression_results <- scm_inflation_adjusted %>%
   group_by(occupation) %>%
   nest() %>%
   mutate(
-    median_trend = map(data, ~perform_trend_regression(.x, "real_median_wage")),
-    mean_trend = map(data, ~perform_trend_regression(.x, "real_mean_wage"))
+    median_trend = map(data, ~perform_trend_regression(.x, "real_median_wage"))
   ) %>%
   select(-data) %>%
-  unnest(c(median_trend, mean_trend), names_sep = "_") %>%
+  unnest(median_trend, names_sep = "_")
+
+# Add mean wage regression if available
+if("real_mean_wage" %in% colnames(scm_inflation_adjusted)) {
+  regression_mean <- scm_inflation_adjusted %>%
+    group_by(occupation) %>%
+    nest() %>%
+    mutate(
+      mean_trend = map(data, ~perform_trend_regression(.x, "real_mean_wage"))
+    ) %>%
+    select(-data) %>%
+    unnest(mean_trend, names_sep = "_")
+  
+  regression_results <- regression_results %>%
+    left_join(regression_mean, by = "occupation")
+}
+
+regression_results <- regression_results %>%
   arrange(desc(median_trend_annual_change))
 
 # 3. Summary Statistics by Year
@@ -404,10 +538,16 @@ summary_by_year <- scm_inflation_adjusted %>%
 # 4. Current Rankings
 cat("Creating current salary rankings...\n")
 current_rankings <- scm_inflation_adjusted %>%
-  filter(year == max(year)) %>%
+  filter(year == max(year, na.rm = TRUE)) %>%
   arrange(desc(real_median_wage)) %>%
-  mutate(rank = row_number()) %>%
-  select(rank, occupation, real_median_wage, employment, real_mean_wage)
+  mutate(rank = row_number())
+
+# Select available columns for rankings
+ranking_columns <- c("rank", "occupation", "real_median_wage", "employment")
+if("real_mean_wage" %in% colnames(current_rankings)) {
+  ranking_columns <- c(ranking_columns, "real_mean_wage")
+}
+current_rankings <- current_rankings %>% select(all_of(ranking_columns))
 
 # 5. Volatility Analysis
 cat("Analyzing salary volatility...\n")
@@ -427,6 +567,9 @@ save(cagr_analysis, regression_results, summary_by_year, current_rankings, volat
      file = "data/processed/analysis_results.RData")
 
 cat("✓ Analysis complete\n")
+cat("CAGR analysis:", nrow(cagr_analysis), "occupations\n")
+cat("Regression analysis:", nrow(regression_results), "occupations\n")
+cat("Current rankings:", nrow(current_rankings), "occupations\n")
 
 # ==========================================
 # PHASE 5: VISUALIZATION
@@ -621,20 +764,58 @@ cat("✓ Analysis complete! Check output folders for results.\n")
 cat("\n", "="*60, "\n")
 cat("ANALYSIS COMPLETE - FILES GENERATED:\n")
 cat("="*60, "\n")
-cat("📊 Data Files:\n")
-cat("  - data/raw/bls_raw_data.RData\n")
-cat("  - data/processed/scm_salary_data.csv\n")
-cat("  - data/processed/processed_data.RData\n")
-cat("  - data/processed/analysis_results.RData\n\n")
-cat("📈 Visualizations:\n")
-cat("  - output/plots/salary_trends.png\n")
-cat("  - output/plots/cagr_comparison.png\n")
-cat("  - output/plots/current_rankings.png\n")
-cat("  - output/plots/distribution_trends.png\n\n")
-cat("📄 Reports:\n")
-cat("  - output/reports/scm_salary_summary.txt\n")
-cat("  - output/reports/current_salary_rankings.csv\n")
-cat("  - output/reports/cagr_analysis.csv\n")
-cat("  - output/reports/regression_analysis.csv\n")
-cat("  - output/reports/volatility_analysis.csv\n")
+
+# Only show file summary if we actually generated files
+if(exists("scm_inflation_adjusted") && nrow(scm_inflation_adjusted) > 0) {
+  cat("📊 Data Files:\n")
+  cat("  - data/raw/bls_raw_data.RData\n")
+  cat("  - data/processed/scm_salary_data.csv\n")
+  cat("  - data/processed/processed_data.RData\n")
+  cat("  - data/processed/analysis_results.RData\n\n")
+  cat("📈 Visualizations:\n")
+  cat("  - output/plots/salary_trends.png\n")
+  cat("  - output/plots/cagr_comparison.png\n")
+  cat("  - output/plots/current_rankings.png\n")
+  cat("  - output/plots/distribution_trends.png\n\n")
+  cat("📄 Reports:\n")
+  cat("  - output/reports/scm_salary_summary.txt\n")
+  cat("  - output/reports/current_salary_rankings.csv\n")
+  cat("  - output/reports/cagr_analysis.csv\n")
+  cat("  - output/reports/regression_analysis.csv\n")
+  cat("  - output/reports/volatility_analysis.csv\n")
+} else {
+  cat("⚠️  Analysis incomplete - check data collection and processing steps\n")
+  cat("Run the script section by section to debug issues.\n")
+}
 cat("="*60, "\n")
+
+# ==========================================
+# DEBUG SECTION - RUN THIS TO TEST API CONNECTION
+# ==========================================
+
+# Uncomment this section to test just the API connection and data processing
+# without running the full analysis and visualization
+
+# cat("\n=== DEBUG: TESTING API CONNECTION ===\n")
+# 
+# # Test single series ID manually
+# test_series_id <- "OEUN000000000000131081101"  # Logisticians employment
+# cat("Testing series ID:", test_series_id, "\n")
+# 
+# payload_test <- list(
+#   'seriesid' = c(test_series_id),
+#   'startyear' = "2021",
+#   'endyear' = "2024",
+#   'registrationKey' = Sys.getenv("BLS_KEY")
+# )
+# 
+# cat("Test payload:", toJSON(payload_test), "\n")
+# 
+# response_test <- blsAPI(payload_test, api_version = 2)
+# cat("Raw API response:\n", response_test, "\n")
+# 
+# json_test <- fromJSON(response_test)
+# cat("Parsed response status:", json_test$status, "\n")
+# if(!is.null(json_test$message)) {
+#   cat("API message:", json_test$message, "\n")
+# }
