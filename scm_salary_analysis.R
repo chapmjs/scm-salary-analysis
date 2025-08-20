@@ -79,7 +79,7 @@ construct_oews_series <- function(occupation_code) {
   data_types <- c("01", "04", "10")
   
   # Correct format based on BLS documentation
-  series_ids <- paste0("OEUN000000000000", clean_code, data_types)
+  series_ids <- paste0("OEUN0000000000000", clean_code, data_types)
   names(series_ids) <- c("employment", "mean_wage", "median_wage")
   
   return(series_ids)
@@ -830,7 +830,7 @@ cat("="*60, "\n")
 # cat("\n=== DEBUG: TESTING API CONNECTION ===\n")
 # 
 # # Test single series ID manually
-# test_series_id <- "OEUN000000000000131081101"  # Logisticians employment
+# test_series_id <- "OEUN0000000000000131081101"  # Logisticians employment
 # cat("Testing series ID:", test_series_id, "\n")
 # 
 # payload_test <- list(
