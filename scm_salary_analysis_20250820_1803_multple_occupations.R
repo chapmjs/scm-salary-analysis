@@ -22,38 +22,31 @@ if(Sys.getenv("BLS_KEY") == "") {
 # ==========================================
 
 # Define Supply Chain Management occupations
-# Organized by function and responsibility level
+# Note: Some codes may not have current data in BLS OEWS
 scm_occupations <- list(
-  # ========== CORE SCM MANAGEMENT ==========
+  # Management Level
   "11-3061" = "Purchasing Managers",
   "11-3071" = "Transportation, Storage, and Distribution Managers", 
-  "11-9199" = "Managers, All Other (includes Operations Managers)",
+  "11-9199" = "Other Management Occupations",
   
-  # ========== CORE SCM PROFESSIONAL/ANALYTICAL ==========
+  # Professional/Analytical  
   "13-1081" = "Logisticians",
-  "13-1023" = "Purchasing Agents, Except Wholesale, Retail, and Farm Products",
-  "13-1022" = "Wholesale and Retail Buyers, Except Farm Products",
-  "13-1199" = "Business Operations Specialists, All Other (includes Supply Chain Analysts)",
+  "13-1023" = "Purchasing Agents (except Wholesale, Retail, Farm)",
+  "13-1022" = "Wholesale and Retail Buyers (except Farm Products)",
+  "13-1199" = "Other Business Operations Specialists",
   
-  # ========== SCM-ADJACENT ANALYTICAL ROLES ==========
-  "13-1111" = "Management Analysts (often work on supply chain optimization)",
-  "15-2031" = "Operations Research Analysts",
-  "17-2112" = "Industrial Engineers",
-  
-  # ========== CORE SCM OPERATIONAL/SUPPORT ==========
-  "43-5011" = "Cargo and Freight Agents",
+  # Specialized/Support
   "43-5061" = "Production, Planning, and Expediting Clerks",
-  "43-5071" = "Shipping, Receiving, and Traffic Clerks",
-  "53-1047" = "Traffic Technicians"
+  "43-5071" = "Shipping, Receiving, and Traffic Clerks"
+  # Note: 53-1047 (Traffic Technicians) may not have current OEWS data
 )
 
-# Additional occupations that could be relevant but may have limited data
-extended_scm_occupations <- list(
+# Alternative/backup occupation codes to try if primary ones fail
+backup_occupations <- list(
   "13-1021" = "Buyers and Purchasing Agents, Farm Products",
   "43-5021" = "Couriers and Messengers", 
   "43-5052" = "Postal Service Mail Carriers",
-  "53-7064" = "Packers and Packagers, Hand",
-  "53-7065" = "Stockers and Order Fillers"
+  "53-7064" = "Packers and Packagers, Hand"
 )
 
 analysis_year <- 2024
@@ -398,20 +391,9 @@ scm_data <- scm_data %>%
     ),
     occupation_level = case_when(
       str_detect(occupation_code, "^11-") ~ "Management",
-      str_detect(occupation_code, "^13-1081|^13-1023|^13-1022|^13-1199") ~ "Core SCM Professional",
-      str_detect(occupation_code, "^13-1111|^15-2031|^17-2112") ~ "SCM-Adjacent Analytical",
-      str_detect(occupation_code, "^43-|^53-") ~ "Operational/Support",
+      str_detect(occupation_code, "^13-") ~ "Professional/Analytical", 
+      str_detect(occupation_code, "^43-|^53-") ~ "Support/Specialized",
       TRUE ~ "Other"
-    ),
-    scm_function = case_when(
-      str_detect(occupation_code, "^11-3061|^13-1023|^13-1022") ~ "Procurement & Sourcing",
-      str_detect(occupation_code, "^11-3071|^43-5011|^43-5071|^53-1047") ~ "Transportation & Logistics",
-      str_detect(occupation_code, "^13-1081") ~ "Supply Chain Planning",
-      str_detect(occupation_code, "^43-5061") ~ "Production Planning",
-      str_detect(occupation_code, "^13-1199") ~ "Supply Chain Analysis",
-      str_detect(occupation_code, "^13-1111|^15-2031|^17-2112") ~ "Process Optimization",
-      str_detect(occupation_code, "^11-9199") ~ "General Operations",
-      TRUE ~ "Other SCM Functions"
     )
   ) %>%
   arrange(desc(median_wage))
@@ -472,28 +454,6 @@ create_comprehensive_report <- function(data) {
     cat(sprintf("  Employment: %s\n", comma(level_summary$total_employment[i])))
     cat(sprintf("  Avg Median Wage: %s\n", dollar(level_summary$median_wage_avg[i])))
     cat(sprintf("  Wage Range: %s\n\n", level_summary$median_wage_range[i]))
-  }
-  
-  # By SCM function
-  cat("ANALYSIS BY SCM FUNCTION:\n")
-  cat(paste(rep("-", 30), collapse=""), "\n")
-  
-  function_summary <- available_data %>%
-    group_by(scm_function) %>%
-    summarise(
-      count = n(),
-      total_employment = sum(employment, na.rm = TRUE),
-      median_wage_avg = mean(median_wage, na.rm = TRUE),
-      .groups = 'drop'
-    ) %>%
-    arrange(desc(median_wage_avg))
-  
-  for(i in 1:nrow(function_summary)) {
-    func <- function_summary$scm_function[i]
-    cat(sprintf("%s:\n", func))
-    cat(sprintf("  Occupations: %d\n", function_summary$count[i]))
-    cat(sprintf("  Employment: %s\n", comma(function_summary$total_employment[i])))
-    cat(sprintf("  Avg Median Wage: %s\n\n", dollar(function_summary$median_wage_avg[i])))
   }
   
   # Top paying occupations
@@ -606,73 +566,6 @@ add_custom_occupation <- function(code, name) {
   }
   
   return(processed_data)
-}
-
-# Function to analyze extended SCM occupations
-analyze_extended_scm <- function() {
-  cat("\nANALYZING EXTENDED SCM OCCUPATIONS:\n")
-  cat(paste(rep("=", 45), collapse=""), "\n")
-  
-  extended_results <- analyze_all_occupations(extended_scm_occupations, analysis_year)
-  
-  # Display results
-  available_extended <- extended_results %>% filter(data_available == TRUE)
-  
-  if(nrow(available_extended) > 0) {
-    cat("Extended SCM occupations with data:\n")
-    for(i in 1:nrow(available_extended)) {
-      cat(sprintf("• %s: %s median, %s employment\n",
-                  available_extended$occupation_name[i],
-                  dollar(available_extended$median_wage[i]),
-                  comma(available_extended$employment[i])))
-    }
-  } else {
-    cat("No data available for extended SCM occupations.\n")
-  }
-  
-  return(extended_results)
-}
-
-# Function to create a comprehensive SCM dataset (core + extended)
-create_comprehensive_dataset <- function() {
-  cat("\nCREATING COMPREHENSIVE SCM DATASET:\n")
-  cat(paste(rep("=", 40), collapse=""), "\n")
-  
-  # Analyze core occupations
-  core_data <- analyze_all_occupations(scm_occupations, analysis_year)
-  
-  # Add category
-  core_data$category <- "Core SCM"
-  
-  # Analyze extended occupations
-  extended_data <- analyze_all_occupations(extended_scm_occupations, analysis_year)
-  extended_data$category <- "Extended SCM"
-  
-  # Combine datasets
-  comprehensive_data <- rbind(core_data, extended_data)
-  
-  # Add calculated fields
-  comprehensive_data <- comprehensive_data %>%
-    mutate(
-      median_hourly = median_wage / 2080,
-      mean_hourly = mean_wage / 2080,
-      wage_ratio = mean_wage / median_wage,
-      occupation_level = case_when(
-        str_detect(occupation_code, "^11-") ~ "Management",
-        str_detect(occupation_code, "^13-1081|^13-1023|^13-1022|^13-1199") ~ "Core SCM Professional",
-        str_detect(occupation_code, "^13-1111|^15-2031|^17-2112") ~ "SCM-Adjacent Analytical",
-        str_detect(occupation_code, "^43-|^53-") ~ "Operational/Support",
-        TRUE ~ "Other"
-      )
-    ) %>%
-    arrange(desc(median_wage))
-  
-  cat("Comprehensive dataset created with", nrow(comprehensive_data), "occupations\n")
-  cat("Core SCM occupations:", sum(comprehensive_data$category == "Core SCM"), "\n")
-  cat("Extended SCM occupations:", sum(comprehensive_data$category == "Extended SCM"), "\n")
-  cat("Occupations with data:", sum(comprehensive_data$data_available), "\n")
-  
-  return(comprehensive_data)
 }
 
 cat("\n✓ Analysis complete! Check the output folder for detailed results.\n")
